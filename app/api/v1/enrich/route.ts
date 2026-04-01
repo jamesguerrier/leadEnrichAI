@@ -13,6 +13,11 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const resolveMx = promisify(dns.resolveMx);
 
+// Vercel serverless configuration
+// Note: Hobby plan is limited to 10s, Pro can go up to 300s
+export const maxDuration = 60;
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: Request) {
   const startTime = Date.now();
   const headerList = await headers();
@@ -106,39 +111,46 @@ export async function POST(req: Request) {
       favicon: `https://www.google.com/s2/favicons?domain=${domain}&sz=64`,
     };
 
-    try {
-      const response = await axios.get(`http://${domain}`, {
-        timeout: 8000, // 8s timeout as requested
-        headers: {
-          "User-Agent": "LeadEnrichmentBot/1.0",
-        },
-      });
+    // Attempt scraping with HTTPS first, then fallback to HTTP
+    const protocols = ["https", "http"];
+    for (const protocol of protocols) {
+      try {
+        const response = await axios.get(`${protocol}://${domain}`, {
+          timeout: 6000, 
+          headers: {
+            "User-Agent": "LeadEnrichmentBot/1.0",
+          },
+        });
 
-      const $ = cheerio.load(response.data);
+        const $ = cheerio.load(response.data);
 
-      enrichmentData.title = $("title").text().trim() || null;
-      enrichmentData.description =
-        $('meta[name="description"]').attr("content") ||
-        $('meta[property="og:description"]').attr("content") ||
-        null;
+        enrichmentData.title = $("title").text().trim() || null;
+        enrichmentData.description =
+          $('meta[name="description"]').attr("content") ||
+          $('meta[property="og:description"]').attr("content") ||
+          null;
 
-      // Extract Company Name from title or OG tags
-      const ogSiteName = $('meta[property="og:site_name"]').attr("content");
-      enrichmentData.companyName = ogSiteName || enrichmentData.title?.split("|")[0]?.split("-")[0]?.trim() || null;
+        const ogSiteName = $('meta[property="og:site_name"]').attr("content");
+        enrichmentData.companyName = ogSiteName || enrichmentData.title?.split("|")[0]?.split("-")[0]?.trim() || null;
 
-      // Social links
-      $('a[href*="linkedin.com/company"]').each((_, el) => {
-        enrichmentData.socials.linkedin = $(el).attr("href") || null;
-      });
-      $('a[href*="twitter.com/"]').each((_, el) => {
-        enrichmentData.socials.twitter = $(el).attr("href") || null;
-      });
-      $('a[href*="facebook.com/"]').each((_, el) => {
-        enrichmentData.socials.facebook = $(el).attr("href") || null;
-      });
-    } catch (scrapingError: any) {
-      console.error(`Scraping failed for ${domain}:`, scrapingError.message);
-      // Fallback: we still return what we have (MX records etc)
+        $('a[href*="linkedin.com/company"]').each((_, el) => {
+          const href = $(el).attr("href");
+          if (href) enrichmentData.socials.linkedin = href;
+        });
+        $('a[href*="twitter.com/"]').each((_, el) => {
+          const href = $(el).attr("href");
+          if (href) enrichmentData.socials.twitter = href;
+        });
+        $('a[href*="facebook.com/"]').each((_, el) => {
+          const href = $(el).attr("href");
+          if (href) enrichmentData.socials.facebook = href;
+        });
+        
+        // If we got data, break out of protocol loop
+        if (enrichmentData.title) break;
+      } catch (scrapingError: any) {
+        console.error(`${protocol.toUpperCase()} scraping failed for ${domain}:`, scrapingError.message);
+      }
     }
 
     const rawScrapedData = {
@@ -170,7 +182,7 @@ export async function POST(req: Request) {
         const prompt = `You are an expert in B2B data quality and API design. Your task is to analyze company data and return a clean, trustworthy, market-ready enriched JSON response.
 
 INPUT DATA:
-\${JSON.stringify(rawScrapedData, null, 2)}
+${JSON.stringify(rawScrapedData, null, 2)}
 
 CRITICAL RULES:
 1. ONLY return verified data or highly confident inferences. DO NOT guess or hallucinate.
@@ -187,7 +199,7 @@ OUTPUT FORMAT (STRICT JSON):
 {
   "domain": "string",
   "company": "string",
-  "enrichedAt": "\${new Date().toISOString()}",
+  "enrichedAt": "${new Date().toISOString()}",
 
   "firmographics": {
     "industry": "string",
@@ -199,9 +211,9 @@ OUTPUT FORMAT (STRICT JSON):
   },
 
   "dataFreshness": {
-    "firmographics": "\${new Date().toISOString()}",
-    "technologyStack": "\${new Date().toISOString()}",
-    "domainIntelligence": "\${new Date().toISOString()}"
+    "firmographics": "${new Date().toISOString()}",
+    "technologyStack": "${new Date().toISOString()}",
+    "domainIntelligence": "${new Date().toISOString()}"
   },
 
   "metadata": { "title": "string", "description": "string", "logoUrl": "string", "favicon": "string" },
@@ -244,17 +256,21 @@ OUTPUT FORMAT (STRICT JSON):
 }`;
 
         const aiResponse = await model.generateContent(prompt);
-        resultData = JSON.parse(aiResponse.response.text());
+        let text = aiResponse.response.text();
+        
+        // Robust JSON parsing (handles markdown blocks)
+        try {
+          const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || [null, text];
+          const cleanJson = (jsonMatch[1] || text).trim();
+          resultData = JSON.parse(cleanJson);
+        } catch (parseError) {
+          console.error("Failed to parse AI JSON response:", parseError);
+          // Fallback to raw data if parsing fails
+        }
       }
     } catch (llmError) {
       console.error("LLM Enrichment failed, returning raw scraped data:", llmError);
     }
-
-    const result = {
-      success: true,
-      data: resultData,
-      error: null,
-    };
 
     // Log usage
     await trackUsage({
@@ -262,11 +278,15 @@ OUTPUT FORMAT (STRICT JSON):
       endpoint: "/api/v1/enrich",
       statusCode: 200,
       responseTime: Date.now() - startTime,
-      ip: typeof ip === "string" ? ip : ip[0],
+      ip: ip,
       userAgent,
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({
+      success: true,
+      data: resultData,
+      error: null,
+    });
   } catch (error: any) {
     console.error("Enrichment API error:", error);
     
@@ -277,7 +297,7 @@ OUTPUT FORMAT (STRICT JSON):
         endpoint: "/api/v1/enrich",
         statusCode: 500,
         responseTime: duration,
-        ip: typeof ip === "string" ? ip : ip[0],
+        ip: ip,
         userAgent,
       });
     }
@@ -288,17 +308,17 @@ OUTPUT FORMAT (STRICT JSON):
     );
   }
 
-  function errorResponse(keyId: string | null, message: string, status: number) {
+  async function errorResponse(keyId: string | null, message: string, status: number) {
     const duration = Date.now() - startTime;
     if (keyId) {
-      trackUsage({
+      await trackUsage({
         apiKeyId: keyId,
         endpoint: "/api/v1/enrich",
         statusCode: status,
         responseTime: duration,
-        ip: typeof ip === "string" ? ip : ip[0],
+        ip: ip,
         userAgent,
-      }).catch(console.error);
+      });
     }
 
     return NextResponse.json(

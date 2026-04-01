@@ -99,5 +99,24 @@ Returns a comprehensive JSON payload containing firmographics, deliverability st
 }
 ```
 
+## 🚀 Deployment to Vercel
+
+LeadEnrich AI is optimized for [Vercel](https://vercel.com/) and can be deployed with a few clicks.
+
+### **1. Configure Environment Variables**
+In your Vercel Dashboard, navigate to **Settings > Environment Variables** and add the following:
+
+- `MONGODB_URI`: Your MongoDB Atlas connection string.
+- `JWT_SECRET`: A long, random string for session security.
+- `GEMINI_API_KEY`: Your Google Gemini API Key.
+- `NEXT_PUBLIC_APP_URL`: Your Vercel deployment URL (e.g., `https://your-app.vercel.app`).
+
+### **2. Database Access**
+Ensure your MongoDB Atlas cluster allows connections from **0.0.0.0/0** (or use Vercel's trusted IPs if on a higher tier) since Vercel utilizes dynamic IP addresses.
+
+### **3. Serverless Timeouts (Hobby Plan)**
+- **Hobby Plan**: Standard execution time is limited to **10 seconds**. Some complex enrichments (slow websites + AI analysis) may approach this limit. 
+- **Pro Plan**: The project is configured with `export const maxDuration = 60;` to support deeper analysis if you upgrade.
+
 ## 📄 License
 This project is open-source and available under the MIT License.

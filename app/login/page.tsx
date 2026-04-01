@@ -61,6 +61,7 @@ export default function AuthPage() {
               className="glass" 
               style={{ width: "100%", padding: "0.75rem 1rem", color: "white" }} 
               placeholder="alex@example.com"
+              autoComplete="email"
             />
           </div>
           <div>
@@ -73,6 +74,7 @@ export default function AuthPage() {
               className="glass" 
               style={{ width: "100%", padding: "0.75rem 1rem", color: "white" }} 
               placeholder="••••••••"
+              autoComplete={isLogin ? "current-password" : "new-password"}
             />
           </div>
 
