@@ -3,6 +3,8 @@ import dbConnect from "@/lib/mongodb";
 import ApiKey from "@/models/ApiKey";
 import { getAuthSession } from "@/lib/auth";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const session = await getAuthSession();

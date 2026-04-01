@@ -5,6 +5,8 @@ import User from "@/models/User";
 import { getAuthSession } from "@/lib/auth";
 import { generateRandomSecret, hashApiKey } from "@/lib/hash";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(req: Request) {
   try {
     const session = await getAuthSession();

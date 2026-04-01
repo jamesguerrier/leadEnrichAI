@@ -4,6 +4,8 @@ import User from "@/models/User";
 import { comparePassword } from "@/lib/hash";
 import { signToken, setAuthCookie } from "@/lib/auth";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(req: Request) {
   try {
     const { email, password } = await req.json();
